@@ -10,10 +10,15 @@ load_dotenv(override=True)
 # Create Gemini client
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-def generate_json(system_prompt: str, user_prompt: str, temperature: float = 0.2) -> dict:
+def generate_json(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.2,
+    max_retries: int = 2
+) -> dict:
     """
-    Generic utility function to get JSON-safe output from Gemini.
-    This function will be reused across multiple projects.
+    Robust LLM utility with retry and self-correction.
+    Treats LLM output as untrusted input.
     """
 
     full_prompt = f"""
@@ -23,26 +28,65 @@ User Request:
 {user_prompt}
 """
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=full_prompt,
-        config=types.GenerateContentConfig(
-            temperature=temperature
+    last_error = None
+
+    for attempt in range(1, max_retries + 2):
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                temperature=temperature
+            )
         )
-    )
 
-    raw_text = response.text.strip()
+        raw_text = response.text.strip()
 
-    # Remove markdown code fences if present
-    if raw_text.startswith("```"):
-        raw_text = raw_text.replace("```json", "")
-        raw_text = raw_text.replace("```", "")
-        raw_text = raw_text.strip()
+        # Remove markdown code fences
+        if raw_text.startswith("```"):
+            raw_text = raw_text.replace("```json", "")
+            raw_text = raw_text.replace("```", "")
+            raw_text = raw_text.strip()
 
-    try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError:
-        raise ValueError(f"Invalid JSON returned by LLM:\n{raw_text}")
+        try:
+            return json.loads(raw_text)
+
+        except json.JSONDecodeError as e:
+            last_error = str(e)
+
+            # Self-correction prompt
+            full_prompt = f"""
+The following output is INVALID JSON:
+
+{raw_text}
+
+Fix the JSON syntax and return ONLY valid JSON.
+"""
+            temperature = 0  # strict mode on retry
+
+    raise ValueError(f"LLM failed after retries. Last error: {last_error}")
+def validate_interview_schema(data: dict):
+    """
+    Validates the schema of interview question output.
+    Raises ValueError if schema is invalid.
+    """
+
+    if "topic" not in data or not isinstance(data["topic"], str):
+        raise ValueError("Invalid or missing 'topic'")
+
+    if "level" not in data or data["level"] not in {"easy", "medium", "hard"}:
+        raise ValueError("Invalid or missing 'level'")
+
+    if "questions" not in data or not isinstance(data["questions"], list):
+        raise ValueError("Invalid or missing 'questions' list")
+
+    for q in data["questions"]:
+        if "question" not in q or not isinstance(q["question"], str):
+            raise ValueError("Each question must have a 'question' string")
+
+        if "difficulty" not in q or q["difficulty"] not in {"easy", "medium", "hard"}:
+            raise ValueError("Each question must have a valid 'difficulty'")
+
+
     
 def interview_question_generator(topic: str, level: str = "medium") -> dict:
     """
@@ -76,11 +120,15 @@ Generate exactly 5 interview questions on the topic: {topic}
 Difficulty level: {level}
 """
 
-    return generate_json(
+    result = generate_json(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=0.3
     )
+
+    validate_interview_schema(result)
+    return result
+
 
 if __name__ == "__main__":
     system_prompt = """
