@@ -28,3 +28,9 @@ Instead of generating plain text, this project produces reliable, structured dat
 - Google Gemini (LLM)
 - Prompt Engineering
 - JSON validation
+
+### Day 5 – Scaling & Product Logic
+- Scaled output from single recipe to multiple options
+- Designed list-based data contract
+- Implemented deterministic ranking logic
+- Prepared output for UI and API consumption
