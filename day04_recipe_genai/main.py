@@ -8,6 +8,7 @@ load_dotenv(override=True)
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+
 def generate_json(
     system_prompt: str,
     user_prompt: str,
@@ -58,28 +59,62 @@ Fix the JSON and return ONLY valid JSON.
 
     raise ValueError(f"LLM failed after retries: {last_error}")
 
+
 def validate_recipe_schema(data: dict):
-    if "recipe_name" not in data or not isinstance(data["recipe_name"], str):
-        raise ValueError("Missing or invalid recipe_name")
+    if "recipes" not in data or not isinstance(data["recipes"], list):
+        raise ValueError("Missing or invalid recipes list")
 
-    if "ingredients" not in data or not isinstance(data["ingredients"], list):
-        raise ValueError("Missing or invalid ingredients list")
+    if len(data["recipes"]) != 3:
+        raise ValueError("Expected exactly 3 recipes")
 
-    if "steps" not in data or not isinstance(data["steps"], list):
-        raise ValueError("Missing or invalid steps list")
+    for recipe in data["recipes"]:
+        required_fields = [
+            "recipe_name",
+            "difficulty",
+            "cook_time_minutes",
+            "ingredients",
+            "steps",
+            "nutrition"
+        ]
 
-    if "nutrition" not in data or not isinstance(data["nutrition"], dict):
-        raise ValueError("Missing or invalid nutrition info")
+        for field in required_fields:
+            if field not in recipe:
+                raise ValueError(f"Missing field in recipe: {field}")
 
-    for key in ["calories", "protein", "carbs", "fat"]:
-        if key not in data["nutrition"]:
-            raise ValueError(f"Missing nutrition field: {key}")
+        if recipe["difficulty"] not in {"easy", "medium", "hard"}:
+            raise ValueError("Invalid difficulty value")
 
+        if not isinstance(recipe["cook_time_minutes"], int):
+            raise ValueError("cook_time_minutes must be an integer")
+
+        for key in ["calories", "protein", "carbs", "fat"]:
+            if key not in recipe["nutrition"]:
+                raise ValueError(f"Missing nutrition field: {key}")
+
+
+def rank_recipes(recipes: list) -> list:
+    """
+    Ranks recipes by cook time (ascending) and difficulty.
+    """
+
+    difficulty_order = {
+        "easy": 1,
+        "medium": 2,
+        "hard": 3
+    }
+
+    return sorted(
+        recipes,
+        key=lambda r: (
+            r["cook_time_minutes"],
+            difficulty_order.get(r["difficulty"], 99)
+        )
+    )
 
 
 def recipe_generator(ingredients: str, diet: str = "vegetarian") -> dict:
     """
-    Generates a recipe using given ingredients and diet preference.
+    Generates recipes using given ingredients and diet preference.
     """
 
     system_prompt = """
@@ -89,24 +124,30 @@ You generate simple, realistic recipes.
 Rules:
 - Return ONLY valid JSON
 - Do NOT include explanations or extra text
-- Recipe must match the diet preference
+- Recipes must match the diet preference
 
 JSON format:
 {
-  "recipe_name": "string",
-  "ingredients": ["string"],
-  "steps": ["string"],
-  "nutrition": {
-    "calories": "string",
-    "protein": "string",
-    "carbs": "string",
-    "fat": "string"
-  }
+  "recipes": [
+    {
+      "recipe_name": "string",
+      "difficulty": "easy | medium | hard",
+      "cook_time_minutes": number,
+      "ingredients": ["string"],
+      "steps": ["string"],
+      "nutrition": {
+        "calories": "string",
+        "protein": "string",
+        "carbs": "string",
+        "fat": "string"
+      }
+    }
+  ]
 }
 """
 
     user_prompt = f"""
-Create a {diet} recipe using the following ingredients:
+Generate exactly 3 {diet} recipes using the following ingredients:
 {ingredients}
 """
 
@@ -117,8 +158,11 @@ Create a {diet} recipe using the following ingredients:
     )
 
     validate_recipe_schema(result)
-    return result
 
+    ranked = rank_recipes(result["recipes"])
+    result["recipes"] = ranked
+
+    return result
 
 
 if __name__ == "__main__":
@@ -127,5 +171,5 @@ if __name__ == "__main__":
 
     result = recipe_generator(ingredients, diet)
 
-    print("\nGenerated Recipe:\n")
+    print("\nGenerated Recipes:\n")
     print(json.dumps(result, indent=2))
