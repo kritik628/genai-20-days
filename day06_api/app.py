@@ -5,10 +5,20 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 load_dotenv(override=True)
 
 app = FastAPI(title="GenAI Recipe API")
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -177,9 +187,12 @@ class RecipeResponse(BaseModel):
     recipes: list
 
 @app.post("/generate-recipes", response_model=RecipeResponse)
+@app.post("/generate-recipes", response_model=RecipeResponse)
 def generate_recipes(request: RecipeRequest):
-    # Basic input validation
+    logger.info("Received recipe generation request")
+
     if not request.ingredients.strip():
+        logger.warning("Validation error: empty ingredients")
         raise HTTPException(
             status_code=400,
             detail={
@@ -193,10 +206,11 @@ def generate_recipes(request: RecipeRequest):
             ingredients=request.ingredients,
             diet=request.diet
         )
+        logger.info("Successfully generated recipes")
         return result
 
     except ValueError as e:
-        # LLM / schema related issues
+        logger.error(f"LLM error: {e}")
         raise HTTPException(
             status_code=422,
             detail={
@@ -206,7 +220,7 @@ def generate_recipes(request: RecipeRequest):
         )
 
     except Exception as e:
-        # System-level failure
+        logger.critical(f"System error: {e}")
         raise HTTPException(
             status_code=500,
             detail={
